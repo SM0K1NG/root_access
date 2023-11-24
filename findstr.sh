@@ -22,6 +22,11 @@ fi
 # Nome do arquivo para salvar os resultados
 arquivo_resultados="resultados.txt"
 
+# Cores ANSI
+verde="\033[0;32m"
+vermelho="\033[0;31m"
+reset="\033[0m"
+
 # Função para percorrer recursivamente os diretórios
 search_string() {
     for file in "$1"/*; do
@@ -33,10 +38,12 @@ search_string() {
             for ext in "${extensoes[@]}"; do
                 if [[ "$file" =~ $ext ]]; then
                     # Se for um arquivo permitido, verifica se a string está presente
-                    echo "Verificando arquivo: $file"
+                    echo -n "Verificando arquivo: $file"
                     if grep -q "$string_a_procurar" "$file"; then
-                        echo "String encontrada em: $file"
+                        echo -e " - ${verde}String encontrada${reset}"
                         echo "$file" >> "$arquivo_resultados"
+                    else
+                        echo -e " - ${vermelho}String não encontrada${reset}"
                     fi
                     break
                 fi
@@ -44,6 +51,9 @@ search_string() {
         fi
     done
 }
+
+# Cria um novo arquivo de resultados ou limpa o existente
+> "$arquivo_resultados"
 
 # Chama a função com o diretório inicial
 search_string "$diretorio_inicial"
