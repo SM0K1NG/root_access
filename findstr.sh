@@ -19,6 +19,9 @@ if [ ${#extensoes[@]} -eq 0 ] || [ "${extensoes[0]}" = "*" ]; then
     extensoes=(".*")
 fi
 
+# Nome do arquivo para salvar os resultados
+arquivo_resultados="resultados.txt"
+
 # Função para percorrer recursivamente os diretórios
 search_string() {
     for file in "$1"/*; do
@@ -33,7 +36,7 @@ search_string() {
                     echo "Verificando arquivo: $file"
                     if grep -q "$string_a_procurar" "$file"; then
                         echo "String encontrada em: $file"
-                        echo "$file" >> resultados.txt
+                        echo "$file" >> "$arquivo_resultados"
                     fi
                     break
                 fi
@@ -41,12 +44,6 @@ search_string() {
         fi
     done
 }
-
-# Nome do arquivo para salvar os resultados
-arquivo_resultados="resultados.txt"
-
-# Cria um novo arquivo de resultados ou limpa o existente
-> "$arquivo_resultados"
 
 # Chama a função com o diretório inicial
 search_string "$diretorio_inicial"
