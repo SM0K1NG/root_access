@@ -17,7 +17,7 @@ $config = [
     'version' => '1.0',
     'max_query_length' => 10000,
     'max_results' => 1000,
-    'allowed_hosts' => ['localhost', '127.0.0.1', '::1', 'mysqlhost']
+    'allowed_hosts' => ['localhost', '127.0.0.1', '::1', 'mysqlhost', 'sistema.bigbangshop.com.br']
 ];
 
 // Funções principais
@@ -87,10 +87,12 @@ function getDatabases($pdo) {
 }
 
 function isValidQuery($query) {
+    global $config;
+    
     $query = preg_replace('/--.*$/m', '', $query);
     $query = preg_replace('/\/\*.*?\*\//s', '', $query);
     
-    if (strlen($query) > $GLOBALS['config']['max_query_length']) {
+    if (strlen($query) > $config['max_query_length']) {
         return false;
     }
     
@@ -593,22 +595,61 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
                 • Servidor: <?= $_SERVER['SERVER_SOFTWARE'] ?? 'Desconhecido' ?>
             </div>
             
+            <?php
+            // Verificar se há parâmetros de conexão na URL
+            $urlHost = $_GET['host'] ?? '';
+            $urlUsername = $_GET['username'] ?? '';
+            $urlPassword = $_GET['password'] ?? '';
+            $urlDatabase = $_GET['database'] ?? '';
+            
+            // Se há parâmetros na URL, tentar conectar automaticamente
+            if ($urlHost && $urlUsername) {
+                $urlPassword = urldecode($urlPassword);
+                
+                // Validação de host
+                $isValidHost = in_array($urlHost, $config['allowed_hosts']) || 
+                              filter_var($urlHost, FILTER_VALIDATE_IP) || 
+                              preg_match('/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $urlHost) ||
+                              preg_match('/^[a-zA-Z0-9.-]+$/', $urlHost);
+                
+                if ($isValidHost) {
+                    $pdo = connectDB($urlHost, $urlUsername, $urlPassword, $urlDatabase);
+                    
+                    if (isset($pdo['error'])) {
+                        echo '<div class="status error">❌ Erro de conexão automática: ' . htmlspecialchars($pdo['error']) . '</div>';
+                    } else {
+                        $_SESSION['pdo'] = $pdo;
+                        $_SESSION['db_config'] = [
+                            'host' => $urlHost,
+                            'username' => $urlUsername,
+                            'database' => $urlDatabase
+                        ];
+                        echo '<div class="status success">✅ Conectado automaticamente via URL!</div>';
+                        echo '<div class="status info">🔄 Recarregando página...</div>';
+                        echo '<script>setTimeout(() => location.reload(), 1500);</script>';
+                    }
+                } else {
+                    echo '<div class="status error">❌ Host não permitido: ' . htmlspecialchars($urlHost) . '</div>';
+                }
+            }
+            ?>
+            
             <form id="connectionForm" class="connection-form">
                 <div class="form-group">
                     <label for="host">Host:</label>
-                    <input type="text" id="host" name="host" value="localhost" required>
+                    <input type="text" id="host" name="host" value="<?= htmlspecialchars($urlHost ?: 'localhost') ?>" required>
                 </div>
                 <div class="form-group">
                     <label for="username">Usuário:</label>
-                    <input type="text" id="username" name="username" required>
+                    <input type="text" id="username" name="username" value="<?= htmlspecialchars($urlUsername) ?>" required>
                 </div>
                 <div class="form-group">
                     <label for="password">Senha:</label>
-                    <input type="password" id="password" name="password">
+                    <input type="password" id="password" name="password" value="<?= htmlspecialchars($urlPassword) ?>">
                 </div>
                 <div class="form-group">
                     <label for="database">Banco de Dados:</label>
-                    <input type="text" id="database" name="database" placeholder="Opcional">
+                    <input type="text" id="database" name="database" value="<?= htmlspecialchars($urlDatabase) ?>" placeholder="Opcional">
                 </div>
                 <div class="form-group">
                     <button type="submit" class="btn btn-primary">Conectar</button>
@@ -626,8 +667,8 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
         <div class="main-content">
             <div class="sidebar">
                 <div class="tabs">
-                    <div class="tab active" onclick="switchTab('databases')">🗂️ Bancos</div>
-                    <div class="tab" onclick="switchTab('tables')">📋 Tabelas</div>
+                    <div class="tab active" onclick="switchTab('databases', this)">🗂️ Bancos</div>
+                    <div class="tab" onclick="switchTab('tables', this)">📋 Tabelas</div>
                 </div>
                 
                 <div id="databasesTab" class="tab-content active">
@@ -653,8 +694,8 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
             
             <div class="content-area">
                 <div class="tabs">
-                    <div class="tab active" onclick="switchContentTab('editor')">💻 Editor SQL</div>
-                    <div class="tab" onclick="switchContentTab('data')">📊 Dados</div>
+                    <div class="tab active" onclick="switchContentTab('editor', this)">💻 Editor SQL</div>
+                    <div class="tab" onclick="switchContentTab('data', this)">📊 Dados</div>
                 </div>
                 
                 <div id="editorTab" class="tab-content active">
@@ -1101,19 +1142,23 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
         }
 
         // Alternar abas
-        function switchTab(tabName) {
+        function switchTab(tabName, element) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             
-            event.target.classList.add('active');
+            if (element) {
+                element.classList.add('active');
+            }
             document.getElementById(tabName + 'Tab').classList.add('active');
         }
 
-        function switchContentTab(tabName) {
+        function switchContentTab(tabName, element) {
             document.querySelectorAll('.content-area .tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.content-area .tab-content').forEach(content => content.classList.remove('active'));
             
-            event.target.classList.add('active');
+            if (element) {
+                element.classList.add('active');
+            }
             document.getElementById(tabName + 'Tab').classList.add('active');
         }
 
@@ -1124,6 +1169,8 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
             loadDatabases();
             loadTables();
         });
+        <?php else: ?>
+        // Não conectado - não carregar dados
         <?php endif; ?>
 
         // Atalhos de teclado
