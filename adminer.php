@@ -1,4 +1,14 @@
 <?php
+// Verificar se as extensões necessárias estão disponíveis
+if (!extension_loaded('pdo') || !extension_loaded('pdo_mysql')) {
+    die('Erro: Extensões PDO e PDO_MySQL são necessárias para este aplicativo funcionar.');
+}
+
+// Configurar tratamento de erros
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('log_errors', 1);
+
 session_start();
 
 // Configurações
@@ -21,12 +31,15 @@ function connectDB($host, $username, $password, $database = null) {
         $pdo = new PDO($dsn, $username, $password, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES => false
+            PDO::ATTR_EMULATE_PREPARES => false,
+            PDO::ATTR_TIMEOUT => 30
         ]);
         
         return $pdo;
     } catch (PDOException $e) {
-        return ['error' => $e->getMessage()];
+        return ['error' => 'Erro de conexão: ' . $e->getMessage()];
+    } catch (Exception $e) {
+        return ['error' => 'Erro geral: ' . $e->getMessage()];
     }
 }
 
@@ -35,13 +48,17 @@ function executeQuery($pdo, $query) {
         $stmt = $pdo->prepare($query);
         $stmt->execute();
         
-        if (stripos($query, 'SELECT') === 0 || stripos($query, 'SHOW') === 0 || stripos($query, 'DESCRIBE') === 0 || stripos($query, 'EXPLAIN') === 0) {
+        $queryType = strtoupper(trim(explode(' ', $query)[0]));
+        
+        if (in_array($queryType, ['SELECT', 'SHOW', 'DESCRIBE', 'EXPLAIN'])) {
             return ['success' => true, 'data' => $stmt->fetchAll()];
         } else {
             return ['success' => true, 'affected' => $stmt->rowCount()];
         }
     } catch (PDOException $e) {
-        return ['error' => $e->getMessage()];
+        return ['error' => 'Erro SQL: ' . $e->getMessage()];
+    } catch (Exception $e) {
+        return ['error' => 'Erro geral: ' . $e->getMessage()];
     }
 }
 
@@ -100,8 +117,14 @@ switch ($action) {
         $password = $_POST['password'] ?? '';
         $database = $_POST['database'] ?? '';
         
-        if (!in_array($host, $config['allowed_hosts']) && !filter_var($host, FILTER_VALIDATE_IP) && !preg_match('/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $host)) {
-            $response = ['error' => 'Host não permitido'];
+        // Validação de host mais flexível
+        $isValidHost = in_array($host, $config['allowed_hosts']) || 
+                      filter_var($host, FILTER_VALIDATE_IP) || 
+                      preg_match('/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $host) ||
+                      preg_match('/^[a-zA-Z0-9.-]+$/', $host);
+        
+        if (!$isValidHost) {
+            $response = ['error' => 'Host não permitido: ' . $host];
             break;
         }
         
@@ -563,6 +586,13 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
             <h1>🗄️ <?= $config['title'] ?> v<?= $config['version'] ?></h1>
             
             <?php if (!isset($_SESSION['pdo'])): ?>
+            <div class="status info">
+                <strong>Informações de Conexão:</strong><br>
+                • PHP Version: <?= PHP_VERSION ?><br>
+                • PDO MySQL: <?= extension_loaded('pdo_mysql') ? '✅ Disponível' : '❌ Não disponível' ?><br>
+                • Servidor: <?= $_SERVER['SERVER_SOFTWARE'] ?? 'Desconhecido' ?>
+            </div>
+            
             <form id="connectionForm" class="connection-form">
                 <div class="form-group">
                     <label for="host">Host:</label>
@@ -679,11 +709,49 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
         let currentPage = 0;
         const pageSize = 50;
 
-        // Conectar ao banco
-        document.getElementById('connectionForm')?.addEventListener('submit', async function(e) {
+        // Aguardar DOM estar pronto
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+        });
+
+        function initializeApp() {
+            debugLog('Inicializando aplicação...');
+            
+            // Conectar ao banco
+            const connectionForm = document.getElementById('connectionForm');
+            if (connectionForm) {
+                connectionForm.addEventListener('submit', handleConnection);
+                debugLog('Formulário de conexão encontrado e configurado');
+            } else {
+                debugLog('Formulário de conexão não encontrado');
+            }
+            
+            // Verificar se elementos principais existem
+            const resultsDiv = document.getElementById('results');
+            if (!resultsDiv) {
+                debugLog('Elemento results não encontrado - criando elemento temporário');
+                // Criar elemento results se não existir
+                const tempResults = document.createElement('div');
+                tempResults.id = 'results';
+                tempResults.className = 'results';
+                tempResults.innerHTML = '<h3>📊 Resultados</h3><div class="status info">Aguardando conexão...</div>';
+                
+                // Adicionar ao content-area se existir
+                const contentArea = document.querySelector('.content-area');
+                if (contentArea) {
+                    contentArea.appendChild(tempResults);
+                } else {
+                    document.body.appendChild(tempResults);
+                }
+            }
+        }
+
+        async function handleConnection(e) {
             e.preventDefault();
             
-            const formData = new FormData(this);
+            debugLog('Tentando conectar ao banco...');
+            
+            const formData = new FormData(e.target);
             formData.append('action', 'connect');
             
             try {
@@ -695,14 +763,23 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
                     }
                 });
                 
+                debugLog('Resposta recebida:', response);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
                 const result = await response.json();
+                debugLog('Resultado:', result);
                 
                 if (result.success) {
+                    debugLog('Conexão bem-sucedida, recarregando página...');
                     location.reload();
                 } else {
-                    showStatus('error', 'Erro: ' + result.error);
+                    showStatus('error', 'Erro: ' + (result.error || 'Erro desconhecido'));
                 }
             } catch (error) {
+                debugLog('Erro na conexão:', error);
                 showStatus('error', 'Erro de conexão: ' + error.message);
             }
         });
@@ -988,11 +1065,39 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
 
         // Mostrar status
         function showStatus(type, message) {
+            // Aguardar o DOM estar pronto
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => showStatus(type, message));
+                return;
+            }
+            
             const resultsDiv = document.getElementById('results');
-            resultsDiv.innerHTML = `
-                <h3>📊 Resultados</h3>
-                <div class="status ${type}">${message}</div>
-            `;
+            if (resultsDiv) {
+                resultsDiv.innerHTML = `
+                    <h3>📊 Resultados</h3>
+                    <div class="status ${type}">${message}</div>
+                `;
+            } else {
+                console.error('Elemento results não encontrado');
+                // Criar elemento temporário se não existir
+                const tempDiv = document.createElement('div');
+                tempDiv.className = `status ${type}`;
+                tempDiv.innerHTML = message;
+                tempDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999; padding: 15px; border-radius: 8px; max-width: 400px;';
+                document.body.appendChild(tempDiv);
+                
+                // Remover após 5 segundos
+                setTimeout(() => {
+                    if (tempDiv.parentNode) {
+                        tempDiv.parentNode.removeChild(tempDiv);
+                    }
+                }, 5000);
+            }
+        }
+        
+        // Função de debug
+        function debugLog(message, data = null) {
+            console.log(`[DEBUG] ${message}`, data || '');
         }
 
         // Alternar abas
@@ -1014,8 +1119,11 @@ if ($action && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER[
 
         // Carregar dados ao iniciar
         <?php if (isset($_SESSION['pdo'])): ?>
-        loadDatabases();
-        loadTables();
+        // Aguardar DOM estar pronto antes de carregar dados
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDatabases();
+            loadTables();
+        });
         <?php endif; ?>
 
         // Atalhos de teclado
